@@ -28,6 +28,14 @@ cc_binary(
     ],
 )
 
+cc_binary(
+	name = "POSE_DLL",
+	srcs = ["pose_api.h","pose_api.cpp","pose_detect.h","pose_detect.cpp","pose_data.h"], # 包含项
+	linkshared=True, # 生成动态库
+	deps = [ 
+		"//mediapipe/graphs/pose_tracking:pose_tracking_cpu_deps", #依赖项
+	],
+)
 # Linux only
 cc_binary(
     name = "pose_tracking_gpu",
