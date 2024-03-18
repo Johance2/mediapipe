@@ -155,64 +155,60 @@ absl::Status pose_detect::RunMPPGraphVideo(const char* video_path, int show_imag
 	return absl::OkStatus();
 }
 
+absl::Status pose_detect::RunMPPGraphVideo2(int rows, int cols, unsigned char* data, POSEInfo** infos, int& count) 
+{
+	cv::Mat camera_frame(rows, cols, CV_8UC3, data, cv::Mat::AUTO_STEP);
+	//cv::cvtColor(camera_frame_raw, camera_frame, cv::COLOR_BGR2RGB);
+	//cv::flip(camera_frame, camera_frame, /*flipcode=HORIZONTAL*/ 1);
 
-absl::Status pose_detect::RunMPPGraphVideo2(int rows, int cols, unsigned char *data, POSEInfo** infos, int &count) {
+	do
+	{
+		// Wrap Mat into an ImageFrame.
+		auto input_frame = absl::make_unique<mediapipe::ImageFrame>(
+			mediapipe::ImageFormat::SRGB, camera_frame.cols, camera_frame.rows,
+			mediapipe::ImageFrame::kDefaultAlignmentBoundary);
+		cv::Mat input_frame_mat = mediapipe::formats::MatView(input_frame.get());
+		camera_frame.copyTo(input_frame_mat);
 
-    do
-    {
+		// Send image packet into the graph.
+		size_t frame_timestamp_us =
+			(double)cv::getTickCount() / (double)cv::getTickFrequency() * 1e6;
 
-        cv::Mat camera_frame(rows, cols, CV_8UC3, data, cv::Mat::AUTO_STEP);
-        // cv::cvtColor(camera_frame_raw, camera_frame, cv::COLOR_BGR2RGB);
-        // cv::flip(camera_frame, camera_frame, /*flipcode=HORIZONTAL*/ 1);
+		MP_RETURN_IF_ERROR(m_graph.AddPacketToInputStream(
+			kInputStream, mediapipe::Adopt(input_frame.release())
+			.At(mediapipe::Timestamp(frame_timestamp_us))));
 
-        // Wrap Mat into an ImageFrame.
-        auto input_frame = absl::make_unique<mediapipe::ImageFrame>(
-                                mediapipe::ImageFormat::SRGB, camera_frame.cols, camera_frame.rows,
-                                mediapipe::ImageFrame::kDefaultAlignmentBoundary);
-        cv::Mat input_frame_mat = mediapipe::formats::MatView(input_frame.get());
-        camera_frame.copyTo(input_frame_mat);
+		// Get the graph result packet, or stop if that fails.
+		mediapipe::Packet packet;
+		mediapipe::Packet packet_landmarks;
+		if (!p_poller->Next(&packet)) break;
+		if (p_poller_landmarks->QueueSize() > 0) {
+			if (p_poller_landmarks->Next(&packet_landmarks)) {
+				auto& output_landmarks = packet_landmarks.Get<mediapipe::NormalizedLandmarkList>();
 
-        // Send image packet into the graph.
-        size_t frame_timestamp_us =
-            (double)cv::getTickCount() / (double)cv::getTickFrequency() * 1e6;
-
-        MP_RETURN_IF_ERROR(m_graph.AddPacketToInputStream(
-                                kInputStream, mediapipe::Adopt(input_frame.release())
-                                .At(mediapipe::Timestamp(frame_timestamp_us))));
-
-        // Get the graph result packet, or stop if that fails.
-        mediapipe::Packet packet;
-        mediapipe::Packet packet_landmarks;
-        if (!p_poller->Next(&packet)) break;
-        if (p_poller_landmarks->QueueSize() > 0) {
-            if (p_poller_landmarks->Next(&packet_landmarks)) {
-                auto& output_landmarks = packet_landmarks.Get<mediapipe::NormalizedLandmarkList>();
-
-                if(m_count != output_landmarks.landmark_size())
-                {
-                    m_count = output_landmarks.landmark_size();
-                    if(m_pose_infos)
-                    {
-                        delete [] m_pose_infos;
-                    }
-                    m_pose_infos = new POSEInfo[m_count];
-                }
-
-                count = output_landmarks.landmark_size();
-                for (int i = 0; i < output_landmarks.landmark_size() && i < count; ++i)
-                {
-                    const mediapipe::NormalizedLandmark landmark = output_landmarks.landmark(i);
-                    m_pose_infos[i].x = landmark.x() * camera_frame.cols;
-                    m_pose_infos[i].y = landmark.y() * camera_frame.rows;
-                    m_pose_infos[i].v = landmark.visibility();
-                    m_pose_infos[i].p = landmark.presence();
-                }
-                *infos = m_pose_infos;
-                count = m_count;
-            }
-        }
-    } while (0);
-    return absl::OkStatus();
+				if (m_count != output_landmarks.landmark_size())
+				{
+					m_count = output_landmarks.landmark_size();
+					if (m_pose_infos)
+					{
+						delete[] m_pose_infos;
+					}
+					m_pose_infos = new POSEInfo[m_count];
+				}
+				for (int i = 0; i < output_landmarks.landmark_size(); ++i)
+				{
+					const mediapipe::NormalizedLandmark landmark = output_landmarks.landmark(i);
+					m_pose_infos[i].x = landmark.x() * camera_frame.cols;
+					m_pose_infos[i].y = landmark.y() * camera_frame.rows;
+					m_pose_infos[i].v = landmark.visibility();
+					m_pose_infos[i].p = landmark.presence();
+				}
+				*infos = m_pose_infos;
+				count = m_count;
+			}
+		}
+	} while (0);
+	return absl::OkStatus();
 }
 
 absl::Status pose_detect::ReleaseGraph() {
